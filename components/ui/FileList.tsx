@@ -72,7 +72,9 @@ export default function FileList({ kind }: Props) {
     return true
   })
 
-  const subs = ['all', ...files.map((f: any) => f.subject as string).filter((v: string, i: number, a: string[]) => a.indexOf(v) === i)]
+  const subList: string[] = []
+  files.forEach((f: any) => { if (!subList.includes(f.subject)) subList.push(f.subject) })
+  const subs = ['all', ...subList]
   const years = ['all', ...YEARS.filter(y => files.some(f => f.year === y))]
   const isBook = kind === 'darslik'
   const color = isBook ? 'text-blue-700' : 'text-red-600'
