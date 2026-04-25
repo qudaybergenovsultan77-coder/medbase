@@ -1,57 +1,42 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { db, storage } from '@/lib/firebase'
+import { db } from '@/lib/firebase'
 import { collection, getDocs, query, where } from 'firebase/firestore'
-import { ref, getDownloadURL } from 'firebase/storage'
 import { useAuth } from '@/lib/AuthContext'
-import { MedFile, LANG_INFO, Lang } from '@/types'
+import { LANG_INFO, Lang } from '@/types'
 
 export default function MyFilesPage() {
   const { profile } = useAuth()
-  const [paidFiles, setPaidFiles] = useState<MedFile[]>([])
-  const [freeFiles, setFreeFiles] = useState<MedFile[]>([])
+  const [paidFiles, setPaidFiles] = useState<any[]>([])
+  const [freeFiles, setFreeFiles] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [downloading, setDownloading] = useState<string | null>(null)
 
   useEffect(() => { if (profile) loadData() }, [profile])
 
   async function loadData() {
-    // Tasdiqlangan to'lovlar
     const paySnap = await getDocs(query(
       collection(db, 'payments'),
       where('userId', '==', profile!.uid),
       where('status', '==', 'confirmed')
     ))
-    const paidFileIds = paySnap.docs.map(d => d.data().fileId)
+    const paidIds = paySnap.docs.map(d => d.data().fileId)
 
-    // Sotib olingan fayllar
-    if (paidFileIds.length > 0) {
-      const fileSnap = await getDocs(collection(db, 'files'))
-      const paid = fileSnap.docs
-        .filter(d => paidFileIds.includes(d.id))
-        .map(d => ({ id: d.id, ...d.data() })) as MedFile[]
-      setPaidFiles(paid)
+    if (paidIds.length > 0) {
+      const allSnap = await getDocs(collection(db, 'files'))
+      setPaidFiles(allSnap.docs.filter(d => paidIds.includes(d.id)).map(d => ({ id: d.id, ...d.data() })))
     }
 
-    // Bepul fayllar
     const freeSnap = await getDocs(query(collection(db, 'files'), where('isPaid', '==', false)))
-    setFreeFiles(freeSnap.docs.map(d => ({ id: d.id, ...d.data() })) as MedFile[])
-
+    setFreeFiles(freeSnap.docs.map(d => ({ id: d.id, ...d.data() })))
     setLoading(false)
   }
 
-  async function handleDownload(file: MedFile) {
-    setDownloading(file.id)
-    try {
-      const url = await getDownloadURL(ref(storage, file.filePath))
-      window.open(url, '_blank')
-    } catch {
-      alert('Yuklab olishda xato. Admin bilan bog\'laning.')
-    }
-    setDownloading(null)
+  function openFile(f: any) {
+    if (f.fileUrl) window.open(f.fileUrl, '_blank')
+    else alert('Fayl URL topilmadi')
   }
 
-  const FileRow = ({ f }: { f: MedFile }) => {
+  const FileRow = ({ f }: { f: any }) => {
     const { flag } = LANG_INFO[f.lang as Lang] || { flag: '🌐' }
     return (
       <div className="flex items-center gap-3 py-3.5 border-b border-gray-50 last:border-0">
@@ -65,9 +50,9 @@ export default function MyFilesPage() {
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <span className={`badge-${f.lang}`}>{flag}</span>
-          <button onClick={() => handleDownload(f)} disabled={downloading === f.id}
-            className="btn-success text-xs py-1.5 px-3 disabled:opacity-60">
-            {downloading === f.id ? '⏳' : 'Yuklab olish'}
+          <button onClick={() => openFile(f)}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-1.5 px-3 rounded-lg">
+            Yuklab olish
           </button>
         </div>
       </div>
