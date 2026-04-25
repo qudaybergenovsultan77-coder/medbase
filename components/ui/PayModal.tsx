@@ -1,8 +1,7 @@
 'use client'
 import { useState, useRef } from 'react'
-import { db, storage } from '@/lib/firebase'
+import { db } from '@/lib/firebase'
 import { collection, addDoc, serverTimestamp, query, where, getDocs } from 'firebase/firestore'
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { useAuth } from '@/lib/AuthContext'
 import { MedFile } from '@/types'
 
@@ -18,6 +17,7 @@ export default function PayModal({ file, onClose, onSuccess }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
   const cardNumber = process.env.NEXT_PUBLIC_CARD_NUMBER || '8600 0000 0000 0000'
@@ -37,7 +37,6 @@ export default function PayModal({ file, onClose, onSuccess }: Props) {
     setError('')
 
     try {
-      // Avval tekshirish — bu fayl uchun to'lov bor-yo'qmi
       const existing = await getDocs(query(
         collection(db, 'payments'),
         where('userId', '==', profile.uid),
@@ -50,13 +49,24 @@ export default function PayModal({ file, onClose, onSuccess }: Props) {
         return
       }
 
-      // 1. Chekni Firebase Storage ga yuklash
-      const ext = chekFile.name.split('.').pop()
-      const chekPath = `cheks/${profile.uid}/${file.id}_${Date.now()}.${ext}`
-      const storageRef = ref(storage, chekPath)
-      await uploadBytes(storageRef, chekFile)
+      setUploadProgress('Chek yuklanmoqda...')
+      const formData = new FormData()
+      formData.append('file', chekFile)
+      formData.append('userId', profile.uid)
 
-      // 2. Firestore ga to'lov yozish
+      const uploadRes = await fetch('/api/chek', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!uploadRes.ok) {
+        const err = await uploadRes.json()
+        throw new Error(err.error || 'Chek yuklashda xato')
+      }
+
+      const { url: chekUrl, publicId: chekPublicId } = await uploadRes.json()
+
+      setUploadProgress('Saqlanmoqda...')
       await addDoc(collection(db, 'payments'), {
         userId: profile.uid,
         userName: profile.fullName,
@@ -64,7 +74,8 @@ export default function PayModal({ file, onClose, onSuccess }: Props) {
         fileId: file.id,
         fileName: file.name,
         amount: file.price,
-        chekPath,
+        chekUrl,
+        chekPublicId,
         chekName: chekFile.name,
         status: 'pending',
         createdAt: serverTimestamp(),
@@ -75,14 +86,13 @@ export default function PayModal({ file, onClose, onSuccess }: Props) {
       setError('Xato: ' + (err.message || 'Noma\'lum xato'))
     }
     setLoading(false)
+    setUploadProgress('')
   }
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-xl">
         <div className="p-6">
-
-          {/* Fayl info */}
           <div className="flex items-center gap-3 mb-5">
             <span className="text-2xl">{file.kind === 'darslik' ? '📘' : '📝'}</span>
             <div>
@@ -91,7 +101,6 @@ export default function PayModal({ file, onClose, onSuccess }: Props) {
             </div>
           </div>
 
-          {/* Karta */}
           <div className="relative bg-gradient-to-br from-blue-700 to-blue-900 rounded-2xl p-5 mb-4 text-white overflow-hidden">
             <div className="text-xs opacity-60 mb-2 font-medium tracking-wide">{cardBank.toUpperCase()} · HUMO / UZCARD</div>
             <div className="text-xl font-mono font-medium tracking-widest mb-3">{cardNumber}</div>
@@ -102,13 +111,11 @@ export default function PayModal({ file, onClose, onSuccess }: Props) {
             </button>
           </div>
 
-          {/* Summa */}
           <div className="bg-emerald-50 rounded-xl p-4 mb-4">
             <div className="text-xs text-gray-500 mb-1">To'lov miqdori</div>
             <div className="text-2xl font-semibold text-emerald-700">{file.price.toLocaleString()} so'm</div>
           </div>
 
-          {/* Ko'rsatma */}
           <div className="bg-blue-50 rounded-xl p-4 mb-4">
             <div className="flex gap-3">
               <span className="text-xl flex-shrink-0">📋</span>
@@ -121,11 +128,9 @@ export default function PayModal({ file, onClose, onSuccess }: Props) {
             </div>
           </div>
 
-          {/* Chek yuklash */}
           <div className="mb-4">
             <label className="block text-sm text-gray-600 mb-2 font-medium">To'lov chekini yuklang</label>
-            <div
-              onClick={() => inputRef.current?.click()}
+            <div onClick={() => inputRef.current?.click()}
               className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-colors
                 ${chekFile ? 'border-emerald-300 bg-emerald-50' : 'border-gray-200 hover:border-blue-300'}`}>
               {chekFile ? (
@@ -133,7 +138,7 @@ export default function PayModal({ file, onClose, onSuccess }: Props) {
                   <span className="text-2xl">✅</span>
                   <div className="text-left">
                     <div className="text-sm font-medium text-emerald-700">{chekFile.name}</div>
-                    <div className="text-xs text-emerald-500">O'zgartirish uchun bosing</div>
+                    <div className="text-xs text-emerald-500">{(chekFile.size / 1024 / 1024).toFixed(1)} MB</div>
                   </div>
                 </div>
               ) : (
@@ -151,12 +156,20 @@ export default function PayModal({ file, onClose, onSuccess }: Props) {
             </div>
           </div>
 
+          {uploadProgress && (
+            <div className="bg-blue-50 text-blue-700 text-sm px-4 py-3 rounded-xl mb-4 flex gap-2">
+              <span>⏳</span> {uploadProgress}
+            </div>
+          )}
           {error && <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-xl mb-4">{error}</div>}
 
           <div className="flex gap-2">
-            <button onClick={onClose} className="flex-1 btn-secondary py-2.5">Bekor qilish</button>
+            <button onClick={onClose} disabled={loading}
+              className="flex-1 bg-white hover:bg-gray-50 text-gray-700 font-medium py-2.5 px-4 rounded-lg border border-gray-200 transition-colors">
+              Bekor qilish
+            </button>
             <button onClick={handleSubmit} disabled={!chekFile || loading}
-              className="flex-1 btn-primary py-2.5">
+              className="flex-1 bg-blue-700 hover:bg-blue-800 text-white font-medium py-2.5 px-4 rounded-lg transition-colors disabled:opacity-50">
               {loading ? 'Yuborilmoqda...' : 'Chek yuborish →'}
             </button>
           </div>
